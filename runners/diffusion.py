@@ -28,7 +28,7 @@ def torch2hwcuint8(x, clip=False):
 def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
     def sigmoid(x):
         return 1 / (np.exp(-x) + 1)
-
+    real_time_indices = []
     if beta_schedule == "quad":
         betas = (
             np.linspace(
@@ -82,13 +82,15 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
         for i in range(len(times)):
             real_time_indices.append(find_in_list(original_times, times[i]))
 
-        num_diffusion_timesteps = len(real_time_indices)
         real_time_indices = np.array(real_time_indices)
-        betas = np.array(betas)
+        betas = np.array(betas[::-1])
+        betas = np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
     else:
         raise NotImplementedError(beta_schedule)
     assert betas.shape == (num_diffusion_timesteps,)
-    return betas
+    return betas, real_time_indices
 
 
 class Diffusion(object):
@@ -279,7 +281,7 @@ class Diffusion(object):
         config = self.config
         img_id = len(glob.glob(f"{self.args.image_folder}/*"))
         print(f"starting from image {img_id}")
-        total_n_samples = 500
+        total_n_samples = 50000
         n_rounds = (total_n_samples - img_id) // config.sampling.batch_size
 
         with torch.no_grad():
