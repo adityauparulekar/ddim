@@ -52,6 +52,39 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
     elif beta_schedule == "sigmoid":
         betas = np.linspace(-6, 6, num_diffusion_timesteps)
         betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
+    elif beta_schedule == "ours":
+        original_betas = torch.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=torch.float32)
+        alphas = 1.0 - original_betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        original_times = -0.5 * torch.log(alphas_cumprod)
+        step_size_eps = 0.3
+        total_time = torch.sum(torch.log(1. - original_betas)/2.)
+        curr_time = -total_time
+        betas = []
+        times = []
+        while curr_time > 0.00001:
+            step_size = step_size_eps * (1. - torch.exp(-2. * curr_time))
+            times.append(curr_time.item())
+            betas.append(1 - torch.exp(-2. * step_size))
+            curr_time -= step_size
+
+        def find_in_list(l, v):
+            for i in range(len(l)):
+                if v <= l[i]:
+                    if i == 0:
+                        return 0
+                    if abs(l[i-1] - v) < abs(v - l[i]):
+                        return i-1
+                    return i
+            return len(l) - 1
+
+        real_time_indices = []
+        for i in range(len(times)):
+            real_time_indices.append(find_in_list(original_times, times[i]))
+
+        num_diffusion_timesteps = len(real_time_indices)
+        real_time_indices = np.array(real_time_indices)
+        betas = np.array(betas)
     else:
         raise NotImplementedError(beta_schedule)
     assert betas.shape == (num_diffusion_timesteps,)
@@ -71,13 +104,14 @@ class Diffusion(object):
         self.device = device
 
         self.model_var_type = config.model.var_type
-        betas = get_beta_schedule(
+        betas, real_time_indices = get_beta_schedule(
             beta_schedule=config.diffusion.beta_schedule,
             beta_start=config.diffusion.beta_start,
             beta_end=config.diffusion.beta_end,
             num_diffusion_timesteps=config.diffusion.num_diffusion_timesteps,
         )
         betas = self.betas = torch.from_numpy(betas).float().to(self.device)
+        self.real_time_indices = real_time_indices[::-1]
         self.num_timesteps = betas.shape[0]
 
         alphas = 1.0 - betas
@@ -245,7 +279,7 @@ class Diffusion(object):
         config = self.config
         img_id = len(glob.glob(f"{self.args.image_folder}/*"))
         print(f"starting from image {img_id}")
-        total_n_samples = 50000
+        total_n_samples = 500
         n_rounds = (total_n_samples - img_id) // config.sampling.batch_size
 
         with torch.no_grad():
@@ -351,6 +385,8 @@ class Diffusion(object):
                     ** 2
                 )
                 seq = [int(s) for s in list(seq)]
+            elif self.args.skip_type == "ours":
+                seq = self.real_time_indices
             else:
                 raise NotImplementedError
             from functions.denoising import generalized_steps
