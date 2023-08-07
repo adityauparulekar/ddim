@@ -5,7 +5,7 @@ import glob
 
 import numpy as np
 import tqdm
-import torch
+import torch, math
 import torch.utils.data as data
 
 from models.diffusion import Model
@@ -25,7 +25,8 @@ def torch2hwcuint8(x, clip=False):
     return x
 
 
-def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
+def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps, num_our_steps=50):
+    print("num steps", num_our_steps)
     def sigmoid(x):
         return 1 / (np.exp(-x) + 1)
     real_time_indices = []
@@ -54,15 +55,41 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
         betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
     elif beta_schedule == "ours":
         original_betas = torch.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=torch.float32)
+        print(original_betas)
         alphas = 1.0 - original_betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
         original_times = -0.5 * torch.log(alphas_cumprod)
-        step_size_eps = 0.3
+        print(original_times)
+        def find_scaling(t_big, t_small, num_steps):
+            s_min = 0.001
+            s_max = 1
+            while True:
+                s_curr = math.sqrt(s_min * s_max)
+                curr_time = t_big
+                times = []
+                step_size = 0
+                while curr_time > t_small:
+                    step_size = s_curr * (1. - math.exp(-2. * curr_time))
+                    times.append(curr_time)
+                    curr_time -= step_size
+                curr_time += step_size
+                if len(times) < num_steps:
+                    s_max = s_curr
+                elif len(times) > num_steps:
+                    s_min = s_curr
+                elif abs(curr_time - t_small) > 1e-6:
+                    s_min = s_curr
+                else:
+                    break
+            return math.sqrt(s_min * s_max)
+        print(3.2406, 5.001079e-5, num_our_steps)
+        step_size_eps = find_scaling(3.2406, 5.001079e-5, num_our_steps)
+        print("stepsize", step_size_eps)
         total_time = torch.sum(torch.log(1. - original_betas)/2.)
-        curr_time = -total_time
+        curr_time = original_times[799]
         betas = []
         times = []
-        while curr_time > 0.00001:
+        while curr_time > 5.0011e-5:
             step_size = step_size_eps * (1. - torch.exp(-2. * curr_time))
             times.append(curr_time.item())
             betas.append(1 - torch.exp(-2. * step_size))
@@ -87,6 +114,10 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
         betas = np.linspace(
             beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
         )
+        
+        print(real_time_indices)
+        print(times)
+        print("time step count", len(real_time_indices))
     else:
         raise NotImplementedError(beta_schedule)
     assert betas.shape == (num_diffusion_timesteps,)
@@ -111,6 +142,7 @@ class Diffusion(object):
             beta_start=config.diffusion.beta_start,
             beta_end=config.diffusion.beta_end,
             num_diffusion_timesteps=config.diffusion.num_diffusion_timesteps,
+            num_our_steps=self.args.num_our_steps
         )
         betas = self.betas = torch.from_numpy(betas).float().to(self.device)
         self.real_time_indices = real_time_indices[::-1]

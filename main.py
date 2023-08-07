@@ -86,9 +86,9 @@ def parse_args_and_config():
         help="eta used to control the variances of sigma",
     )
     parser.add_argument("--sequence", action="store_true")
-
+    parser.add_argument("--num_our_steps", type=int, default=50)
     args = parser.parse_args()
-    args.log_path = os.path.join(args.exp, "logs", args.doc)
+    args.log_path = os.path.join(args.exp, args.doc)
 
     # parse config file
     with open(os.path.join("configs", args.config), "r") as f:
