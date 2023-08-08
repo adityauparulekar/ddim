@@ -409,8 +409,8 @@ class Diffusion(object):
 
         if self.args.sample_type == "generalized":
             if self.args.skip_type == "uniform":
-                skip = self.num_timesteps // self.args.timesteps
-                seq = range(0, self.num_timesteps, skip)
+                seq = np.linspace(0, 0.8*self.num_timesteps, self.args.timesteps)
+                seq = [int(s) for s in list(seq)]
             elif self.args.skip_type == "quad":
                 seq = (
                     np.linspace(
