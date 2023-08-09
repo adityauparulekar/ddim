@@ -53,6 +53,31 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
     elif beta_schedule == "sigmoid":
         betas = np.linspace(-6, 6, num_diffusion_timesteps)
         betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
+    elif beta_schedule == "chen":
+        betas = torch.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=torch.float32)
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        original_times = -0.5 * torch.log(alphas_cumprod)
+        total_time = original_times[799]
+        times = np.linspace(original_times[799].item(), original_times[0].item(), num_our_steps)
+        def find_in_list(l, v):
+            for i in range(len(l)):
+                if v <= l[i]:
+                    if i == 0:
+                        return 0
+                    if abs(l[i-1] - v) < abs(v - l[i]):
+                        return i-1
+                    return i
+            return len(l) - 1
+
+        real_time_indices = []
+        for i in range(len(times)):
+            real_time_indices.append(find_in_list(original_times, times[i]))
+        betas = np.linspace(
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+        )
+        real_time_indices = np.array(real_time_indices)
+        print("time indices", real_time_indices)
     elif beta_schedule == "ours":
         original_betas = torch.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=torch.float32)
         print(original_betas)
